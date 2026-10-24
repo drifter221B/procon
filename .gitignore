@@ -1,0 +1,32 @@
+# Keep unfinished work local, regardless of the language directory.
+todo/
+
+# macOS metadata
+.DS_Store
+._*
+
+# Python caches and local virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Rust and C++ build artifacts
+target/
+build/
+*.o
+*.obj
+*.rlib
+*.rmeta
+*.exe
+*.dSYM/
+# Avoid ignoring all *.out files, which may contain expected test output.
+a.out
+
+# Editor temporary and backup files
+*.swp
+*.swo
+*~
