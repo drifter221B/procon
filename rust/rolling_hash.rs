@@ -1,3 +1,89 @@
+/// 負数は非負の剰余へ正規化する。同じ `modulo` の剰余に写る整数は区別できない。
+pub trait RollingHashInput {
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn value_at(&self, index: usize, modulo: u64) -> u64;
+}
+
+impl RollingHashInput for str {
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn value_at(&self, index: usize, modulo: u64) -> u64 {
+        (1 + self.as_bytes()[index] as i128 - b'a' as i128).rem_euclid(modulo as i128) as u64
+    }
+}
+
+impl RollingHashInput for String {
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn value_at(&self, index: usize, modulo: u64) -> u64 {
+        self.as_str().value_at(index, modulo)
+    }
+}
+
+macro_rules! impl_integer_input {
+    ($wide:ty; $($integer:ty),+ $(,)?) => {
+        $(
+            impl RollingHashInput for [$integer] {
+                fn len(&self) -> usize {
+                    self.len()
+                }
+
+                fn value_at(&self, index: usize, modulo: u64) -> u64 {
+                    (self[index] as $wide).rem_euclid(modulo as $wide) as u64
+                }
+            }
+        )+
+    };
+}
+
+impl_integer_input!(u128; u8, u16, u32, u64, u128, usize);
+impl_integer_input!(i128; i8, i16, i32, i64, i128, isize);
+
+impl<T, const N: usize> RollingHashInput for [T; N]
+where
+    [T]: RollingHashInput,
+{
+    fn len(&self) -> usize {
+        N
+    }
+
+    fn value_at(&self, index: usize, modulo: u64) -> u64 {
+        self.as_slice().value_at(index, modulo)
+    }
+}
+
+impl<T> RollingHashInput for Vec<T>
+where
+    [T]: RollingHashInput,
+{
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn value_at(&self, index: usize, modulo: u64) -> u64 {
+        self.as_slice().value_at(index, modulo)
+    }
+}
+
+impl<T: RollingHashInput + ?Sized> RollingHashInput for &T {
+    fn len(&self) -> usize {
+        T::len(*self)
+    }
+
+    fn value_at(&self, index: usize, modulo: u64) -> u64 {
+        T::value_at(*self, index, modulo)
+    }
+}
+
 pub struct RollingHash {
     size: usize,
     modulo: u64,
@@ -6,20 +92,22 @@ pub struct RollingHash {
 }
 
 impl RollingHash {
-
-    pub fn new(s: &str, base: u64, modulo: u64) -> Self {
-
-        let length = s.len();
+    pub fn new<T: RollingHashInput + ?Sized>(source: &T, base: u64, modulo: u64) -> Self {
+        let length = source.len();
         let mut base_mod = vec![1u64; length + 1];
         let mut hash_list = vec![1u64; length + 1];
 
-        for (i, c) in s.bytes().enumerate() {
+        for i in 0..length {
             base_mod[i + 1] = Self::multiple(base_mod[i], base, modulo);
-            hash_list[i + 1] = Self::add(Self::multiple(hash_list[i], base, modulo), Self::subtract(1 + c as u64, b'a' as u64, modulo), modulo);
+            hash_list[i + 1] = Self::add(
+                Self::multiple(hash_list[i], base, modulo),
+                source.value_at(i, modulo),
+                modulo,
+            );
         }
 
         RollingHash {
-            size: s.len(),
+            size: length,
             modulo,
             base_mod,
             hash_list,
@@ -27,11 +115,11 @@ impl RollingHash {
     }
 
     const fn add(x: u64, y: u64, modulo: u64) -> u64 {
-        (x + y) % modulo
+        ((x as u128 + y as u128) % modulo as u128) as u64
     }
 
     const fn subtract(x: u64, y: u64, modulo: u64) -> u64 {
-        (modulo + x - y) % modulo
+        ((modulo as u128 + x as u128 - y as u128) % modulo as u128) as u64
     }
 
     const fn multiple(x: u64, y: u64, modulo: u64) -> u64 {
@@ -49,16 +137,22 @@ impl RollingHash {
     }
 
     pub fn hash(&self, left: usize, right: usize) -> u64 {
-        Self::subtract(self.hash_list[right], Self::multiple(self.hash_list[left], self.base_mod[right - left], self.modulo), self.modulo)
+        Self::subtract(
+            self.hash_list[right],
+            Self::multiple(
+                self.hash_list[left],
+                self.base_mod[right - left],
+                self.modulo,
+            ),
+            self.modulo,
+        )
     }
 
     pub fn lcp(rh_a: &RollingHash, rh_b: &RollingHash, a_left: usize, b_left: usize) -> usize {
-
         let mut left = std::cmp::min(rh_a.len() - a_left, rh_b.len() - b_left) + 1;
         let mut right = 0;
 
         while 1 < left - right {
-
             let mid = right + (left - right) / 2;
 
             if rh_a.hash(a_left, a_left + mid) != rh_b.hash(b_left, b_left + mid) {
@@ -70,7 +164,6 @@ impl RollingHash {
 
         right
     }
-
 }
 
 #[cfg(test)]
@@ -116,6 +209,300 @@ mod tests {
         }
 
         common_prefix_length
+    }
+
+    fn naive_integer_hash(source: &[i64], base: u64, modulo: u64) -> u64 {
+        let mut hash_value = 0i128;
+        for &value in source {
+            hash_value = (hash_value * base as i128 + value as i128).rem_euclid(modulo as i128);
+        }
+        hash_value as u64
+    }
+
+    #[test]
+    fn new_with_integer_array_slice_and_vec_returns_same_hash() {
+        // Arrange
+        let source_array = [10u64, 20, 30];
+        let source_slice = source_array.as_slice();
+        let source_vec = source_array.to_vec();
+        let base = 100;
+        let modulo = DEFAULT_MODULO;
+        let expected_length = source_array.len();
+        let expected_hash = 102_030;
+
+        // Act
+        let hashes = [
+            RollingHash::new(&source_array, base, modulo),
+            RollingHash::new(source_slice, base, modulo),
+            RollingHash::new(&source_slice, base, modulo),
+            RollingHash::new(&source_vec, base, modulo),
+        ];
+        let actual_results = hashes.map(|hash| (hash.len(), hash.hash(0, hash.len())));
+
+        // Assert
+        for (actual_length, actual_hash) in actual_results {
+            assert_eq!(actual_length, expected_length);
+            assert_eq!(actual_hash, expected_hash);
+        }
+    }
+
+    #[test]
+    fn new_with_string_and_borrowed_str_preserves_string_hash() {
+        // Arrange
+        let source_string = String::from("abc");
+        let source_str = source_string.as_str();
+        let base = 10;
+        let modulo = DEFAULT_MODULO;
+        let expected_hash = 123;
+        let query_left = 0;
+        let query_right = source_string.len();
+
+        // Act
+        let string_hash = RollingHash::new(&source_string, base, modulo);
+        let borrowed_str_hash = RollingHash::new(&source_str, base, modulo);
+        let actual_string_hash = string_hash.hash(query_left, query_right);
+        let actual_borrowed_str_hash = borrowed_str_hash.hash(query_left, query_right);
+
+        // Assert
+        assert_eq!(actual_string_hash, expected_hash);
+        assert_eq!(actual_borrowed_str_hash, expected_hash);
+    }
+
+    #[test]
+    fn new_accepts_all_builtin_integer_types() {
+        // Arrange
+        let source_u8 = [1u8, 2, 3];
+        let source_u16 = [1u16, 2, 3];
+        let source_u32 = [1u32, 2, 3];
+        let source_u64 = [1u64, 2, 3];
+        let source_u128 = [1u128, 2, 3];
+        let source_usize = [1usize, 2, 3];
+        let source_i8 = [1i8, 2, 3];
+        let source_i16 = [1i16, 2, 3];
+        let source_i32 = [1i32, 2, 3];
+        let source_i64 = [1i64, 2, 3];
+        let source_i128 = [1i128, 2, 3];
+        let source_isize = [1isize, 2, 3];
+        let base = 10;
+        let modulo = DEFAULT_MODULO;
+        let query_left = 0;
+        let query_right = 3;
+        let expected_hash = 123;
+
+        // Act
+        let hashes = [
+            RollingHash::new(&source_u8, base, modulo),
+            RollingHash::new(&source_u16, base, modulo),
+            RollingHash::new(&source_u32, base, modulo),
+            RollingHash::new(&source_u64, base, modulo),
+            RollingHash::new(&source_u128, base, modulo),
+            RollingHash::new(&source_usize, base, modulo),
+            RollingHash::new(&source_i8, base, modulo),
+            RollingHash::new(&source_i16, base, modulo),
+            RollingHash::new(&source_i32, base, modulo),
+            RollingHash::new(&source_i64, base, modulo),
+            RollingHash::new(&source_i128, base, modulo),
+            RollingHash::new(&source_isize, base, modulo),
+        ];
+        let actual_hashes = hashes.map(|hash| hash.hash(query_left, query_right));
+
+        // Assert
+        for actual_hash in actual_hashes {
+            assert_eq!(actual_hash, expected_hash);
+        }
+    }
+
+    #[test]
+    fn hash_for_empty_single_and_multiple_integer_inputs_matches_naive_hash_for_all_ranges() {
+        // Arrange
+        let source_cases: &[&[i64]] = &[&[], &[0], &[-1], &[0, -1, 7, -1, 0], &[7, 0, -1]];
+        let base = DEFAULT_BASE;
+        let modulo = DEFAULT_MODULO;
+
+        // Act
+        let mut actual_states = Vec::new();
+        let mut actual_results = Vec::new();
+        for &source in source_cases {
+            let rolling_hash = RollingHash::new(source, base, modulo);
+            actual_states.push((
+                (rolling_hash.len(), rolling_hash.is_empty()),
+                (source.len(), source.is_empty()),
+            ));
+            for left in 0..=source.len() {
+                for right in left..=source.len() {
+                    let actual_hash = rolling_hash.hash(left, right);
+                    let expected_hash = naive_integer_hash(&source[left..right], base, modulo);
+                    actual_results.push((actual_hash, expected_hash));
+                }
+            }
+        }
+
+        // Assert
+        for (actual_state, expected_state) in actual_states {
+            assert_eq!(actual_state, expected_state);
+        }
+        for (actual_result, expected_result) in actual_results {
+            assert_eq!(actual_result, expected_result);
+        }
+    }
+
+    #[test]
+    fn lcp_for_integer_inputs_counts_elements_from_each_start() {
+        // Arrange
+        let source_a = [99i64, 0, -1, -1, 7];
+        let source_b = [0i64, -1, -1, 8, 7];
+        let base = DEFAULT_BASE;
+        let modulo = DEFAULT_MODULO;
+        let a_left = 1;
+        let b_left = 0;
+        let expected_lcp = 3;
+        let expected_lcp_at_end = 0;
+        let rolling_hash_a = RollingHash::new(&source_a, base, modulo);
+        let rolling_hash_b = RollingHash::new(&source_b, base, modulo);
+
+        // Act
+        let actual_lcp = RollingHash::lcp(&rolling_hash_a, &rolling_hash_b, a_left, b_left);
+        let actual_lcp_at_end =
+            RollingHash::lcp(&rolling_hash_a, &rolling_hash_b, source_a.len(), b_left);
+
+        // Assert
+        assert_eq!(actual_lcp, expected_lcp);
+        assert_eq!(actual_lcp_at_end, expected_lcp_at_end);
+    }
+
+    #[test]
+    fn lcp_for_integer_inputs_matches_direct_comparison_for_all_start_indices() {
+        // Arrange
+        let source_cases: &[&[i64]] = &[&[], &[0], &[-1, -1, 0, 7], &[7, -1, -1, 0]];
+        let base = DEFAULT_BASE;
+        let modulo = DEFAULT_MODULO;
+
+        // Act
+        let mut collected_results = Vec::new();
+        for &source_a in source_cases {
+            for &source_b in source_cases {
+                let rolling_hash_a = RollingHash::new(source_a, base, modulo);
+                let rolling_hash_b = RollingHash::new(source_b, base, modulo);
+                for a_left in 0..=source_a.len() {
+                    for b_left in 0..=source_b.len() {
+                        let actual_lcp =
+                            RollingHash::lcp(&rolling_hash_a, &rolling_hash_b, a_left, b_left);
+                        let expected_lcp = source_a[a_left..]
+                            .iter()
+                            .zip(&source_b[b_left..])
+                            .take_while(|(value_a, value_b)| value_a == value_b)
+                            .count();
+                        collected_results.push((actual_lcp, expected_lcp));
+                    }
+                }
+            }
+        }
+
+        // Assert
+        for (actual_lcp, expected_lcp) in collected_results {
+            assert_eq!(actual_lcp, expected_lcp);
+        }
+    }
+
+    #[test]
+    fn hash_for_u128_values_preserves_bits_above_u64_before_normalizing() {
+        // Arrange
+        let source = [u128::MAX, u64::MAX as u128, 1u128 << 64];
+        let base = DEFAULT_BASE;
+        let modulo = u64::MAX - 1;
+        let expected_hashes = [3, 1, 2];
+
+        // Act
+        let rolling_hash = RollingHash::new(&source, base, modulo);
+        let actual_hashes = std::array::from_fn(|index| rolling_hash.hash(index, index + 1));
+
+        // Assert
+        assert_eq!(actual_hashes, expected_hashes);
+    }
+
+    #[test]
+    fn hash_for_i128_boundaries_normalizes_negative_values_without_overflow() {
+        // Arrange
+        let source = [i128::MIN, i128::MIN + 1, i128::MAX];
+        let base = DEFAULT_BASE;
+        let modulo = u64::MAX;
+        let expected_hashes = [(1u64 << 63) - 1, 1u64 << 63, (1u64 << 63) - 1];
+
+        // Act
+        let rolling_hash = RollingHash::new(&source, base, modulo);
+        let actual_hashes = std::array::from_fn(|index| rolling_hash.hash(index, index + 1));
+
+        // Assert
+        assert_eq!(actual_hashes, expected_hashes);
+    }
+
+    #[test]
+    fn hash_for_integer_input_with_large_modulo_matches_alternating_sum_for_all_ranges() {
+        // Arrange
+        let modulo = u64::MAX;
+        let base = modulo - 1;
+        let source = [modulo - 1, modulo - 2, 0, modulo - 1];
+
+        // Act
+        let rolling_hash = RollingHash::new(&source, base, modulo);
+        let mut actual_results = Vec::new();
+        for left in 0..=source.len() {
+            for right in left..=source.len() {
+                // base ≡ -1 のため、積を使わない交代和で期待値を計算できる。
+                let expected_hash = source[left..right].iter().fold(0i128, |hash, &value| {
+                    (value as i128 - hash).rem_euclid(modulo as i128)
+                }) as u64;
+                let actual_hash = rolling_hash.hash(left, right);
+                actual_results.push((actual_hash, expected_hash));
+            }
+        }
+
+        // Assert
+        for (actual_hash, expected_hash) in actual_results {
+            assert_eq!(actual_hash, expected_hash);
+        }
+    }
+
+    #[test]
+    fn hash_for_integer_input_with_modulo_one_returns_zero_for_all_ranges() {
+        // Arrange
+        let source = [i128::MIN, 0, -1, i128::MAX];
+        let base = u64::MAX;
+        let modulo = 1;
+        let expected_hash = 0;
+
+        // Act
+        let rolling_hash = RollingHash::new(&source, base, modulo);
+        let mut actual_hashes = Vec::new();
+        for left in 0..=source.len() {
+            for right in left..=source.len() {
+                actual_hashes.push(rolling_hash.hash(left, right));
+            }
+        }
+
+        // Assert
+        for actual_hash in actual_hashes {
+            assert_eq!(actual_hash, expected_hash);
+        }
+    }
+
+    #[test]
+    fn hash_for_integers_with_equal_residues_returns_same_hash() {
+        // Arrange
+        let source = [-1i64, 100, 201];
+        let base = DEFAULT_BASE;
+        let modulo = 101;
+        let expected_hash = 100;
+
+        // Act
+        let rolling_hash = RollingHash::new(&source, base, modulo);
+        let actual_hashes =
+            std::array::from_fn::<_, 3, _>(|index| rolling_hash.hash(index, index + 1));
+
+        // Assert
+        for actual_hash in actual_hashes {
+            assert_eq!(actual_hash, expected_hash);
+        }
     }
 
     #[test]
@@ -241,7 +628,7 @@ mod tests {
         let source_text = "あa";
         let base = DEFAULT_BASE;
         let modulo = DEFAULT_MODULO;
-        let expected_length = source_text.as_bytes().len();
+        let expected_length = source_text.len();
 
         // Act
         let rolling_hash = RollingHash::new(source_text, base, modulo);
@@ -372,8 +759,6 @@ mod tests {
 
         // Assert
         assert!(actual_result.is_err());
-
-        // Assert
     }
 
     #[test]
@@ -479,8 +864,6 @@ mod tests {
 
         // Assert
         assert!(actual_result.is_err());
-
-        // Assert
     }
 
     #[test]
