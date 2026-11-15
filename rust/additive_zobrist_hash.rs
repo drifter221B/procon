@@ -4,8 +4,6 @@ use std::hash::{Hash, Hasher};
 
 const DEFAULT_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
-/// 多重集合のハッシュを、各値のハッシュの和で管理する。
-///
 /// `H = Σ count(x) * h(seed, x) mod 2^64` として計算するため、挿入順序に依存しない。
 /// 同じ seed、キーの型、ハッシュ実装で作成した多重集合同士を比較できる。
 /// また、多重集合の和のハッシュは、各ハッシュの `wrapping_add` に等しい。
@@ -30,12 +28,10 @@ impl<T: Eq + Hash> Default for AdditiveZobristHash<T> {
 }
 
 impl<T: Eq + Hash> AdditiveZobristHash<T> {
-    /// 既定の seed で空の多重集合を作る。
     pub fn new() -> Self {
         Self::with_seed(DEFAULT_SEED)
     }
 
-    /// 指定した seed で空の多重集合を作る。
     pub fn with_seed(seed: u64) -> Self {
         Self {
             seed,
@@ -45,7 +41,6 @@ impl<T: Eq + Hash> AdditiveZobristHash<T> {
         }
     }
 
-    /// スライスの各値を複製し、既定の seed で多重集合を作る。
     pub fn from_slice(values: &[T]) -> Self
     where
         T: Clone,
@@ -65,36 +60,30 @@ impl<T: Eq + Hash> AdditiveZobristHash<T> {
         self.element_count
     }
 
-    /// 異なる値の数を返す。
     #[inline]
     pub fn distinct_len(&self) -> usize {
         self.element_counts.len()
     }
 
-    /// 要素が存在しないかを返す。
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.element_count == 0
     }
 
-    /// 多重集合のハッシュを返す。空なら 0 だが、0 でも空とは限らない。
+    /// 空なら 0 だが、0 でも空とは限らない。
     #[inline]
     pub fn hash(&self) -> u64 {
         self.hash_value
     }
 
-    /// 指定した値が存在するかを返す。
     pub fn contains(&self, value: &T) -> bool {
         self.element_counts.contains_key(value)
     }
 
-    /// 指定した値の個数を返す。未登録なら 0 を返す。
     pub fn count(&self, value: &T) -> usize {
         self.element_counts.get(value).copied().unwrap_or(0)
     }
 
-    /// 指定した値を 1 個追加する。
-    ///
     /// # Panics
     ///
     /// 総要素数または値の個数が `usize::MAX` を超える場合、状態を変更せず panic する。
@@ -102,8 +91,6 @@ impl<T: Eq + Hash> AdditiveZobristHash<T> {
         self.insert_multiple(value, 1);
     }
 
-    /// 指定した値を `insert_count` 個追加する。0 個なら何もしない。
-    ///
     /// # Panics
     ///
     /// 総要素数または値の個数が `usize::MAX` を超える場合、状態を変更せず panic する。
@@ -126,14 +113,11 @@ impl<T: Eq + Hash> AdditiveZobristHash<T> {
         self.element_counts.insert(value, next_count);
     }
 
-    /// 指定した値を 1 個削除し、削除できたかを返す。
     pub fn remove(&mut self, value: &T) -> bool {
         self.remove_multiple(value, 1) == 1
     }
 
-    /// 指定した値を最大 `remove_count` 個削除し、実際に削除した個数を返す。
-    ///
-    /// 0 個の指定や未登録の値に対しては、状態を変更せず 0 を返す。
+    /// 存在数を上限に最大 `remove_count` 個削除し、実際に削除した個数を返す。
     pub fn remove_multiple(&mut self, value: &T, remove_count: usize) -> usize {
         if remove_count == 0 {
             return 0;
@@ -159,14 +143,13 @@ impl<T: Eq + Hash> AdditiveZobristHash<T> {
         removed_count
     }
 
-    /// 指定した値をすべて削除し、削除した個数を返す。
     pub fn remove_all(&mut self, value: &T) -> usize {
         let current_count = self.count(value);
 
         self.remove_multiple(value, current_count)
     }
 
-    /// seed を保ったまま、ハッシュと全要素を空の状態に戻す。
+    /// seed は保持する。
     pub fn clear(&mut self) {
         self.hash_value = 0;
         self.element_count = 0;
